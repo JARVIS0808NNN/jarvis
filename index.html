@@ -90,6 +90,8 @@ h2{font-size:20px;font-weight:500;letter-spacing:.04em}
 .voceop.sel{border-color:var(--red)}
 .imp label{display:block;font-size:14px;color:var(--dim);margin:14px 0 4px}
 .imp input[type=range]{width:100%;accent-color:var(--red)}
+.campo{display:block;width:100%;margin-top:6px;background:var(--card);border:1px solid var(--line);border-radius:12px;color:var(--text);padding:12px;font-size:16px;font-family:ui-monospace,Menlo,monospace;resize:vertical}
+.imp .ok{color:#7fd28a}.imp .ko{color:var(--red)}
 button:focus-visible,input:focus-visible{outline:2px solid var(--crimson);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){.orb i,.orb b,#cass{animation:none;transition:none}}
 </style>
@@ -128,7 +130,15 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--crimson);outlin
 <section class="view" id="impostazioni">
   <div class="top"><button class="back" data-go="home">Indietro</button><h2>Impostazioni</h2><span></span></div>
   <div class="imp">
-    <h3>Voce di JARVIS</h3>
+    <h3>Collegamento al cervello</h3>
+    <p class="nota" id="cfgAttuale" style="text-align:left;padding-bottom:6px"></p>
+    <label>Incolli qui l'indirizzo del cervello e il codice di collegamento (anche insieme, come li ha copiati)
+      <textarea id="cfgTesto" class="campo" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea></label>
+    <button class="demo" id="cfgProva" style="margin:10px 0 4px">Salva e prova il collegamento</button>
+    <button class="demo" id="cfgScollega" style="margin:4px 0 4px">Scollega</button>
+    <button class="demo" id="cfgStoria" style="margin:4px 0 4px">Cancella la conversazione</button>
+    <p class="nota" id="cfgStato" style="text-align:left"></p>
+    <h3 style="margin-top:22px">Voce di JARVIS</h3>
     <div id="elencoVoci"></div>
     <button class="demo" id="aggVoci" style="margin:6px 0">Aggiorna elenco</button>
     <label>Velocità <input type="range" id="sliderVel" min="0.7" max="1.3" step="0.05"></label>
@@ -145,7 +155,8 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--crimson);outlin
 
 <script>
 "use strict";
-var VERSIONE="0.8 - 17/11/2026";
+var RE_URL=/https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec/;
+var VERSIONE="0.9 - 17/11/2026";
 var SEZIONI=[
  ["home","Home","Cerchio e pannelli in diretta",""],
  ["attivita","Attività","Registro di JARVIS",""],
@@ -184,7 +195,7 @@ function vai(id){
 }
 function apri(s){
   menu(false);
-  if(s[0]==="impostazioni"){vai("impostazioni");mostraVoci();return;}
+  if(s[0]==="impostazioni"){vai("impostazioni");mostraVoci();mostraCfg();return;}
   if(["home","chat","attivita"].indexOf(s[0])>=0){vai(s[0]);return;}
   document.getElementById("titolo").textContent=s[1];
   document.getElementById("descr").textContent=s[3];
@@ -267,7 +278,7 @@ function aggiungi(t,chi,live){
   if(live){scrivi(d,t);}else{d.textContent=t;}
   msgs.scrollTop=msgs.scrollHeight;
 }
-aggiungi("Buongiorno, Signore. Il mio cervello AI non è ancora collegato: lo attiveremo al prossimo passo.","j");
+aggiungi(collegato()?"Sono collegato e a Sua disposizione, Signore.":"Il mio cervello non è ancora collegato, Signore. Lo imposti in Impostazioni.","j");
 
 /* saluto */
 var h=new Date().getHours();
@@ -445,26 +456,180 @@ function pronuncia(t,fine){
 }
 if(window.speechSynthesis)speechSynthesis.onvoiceschanged=function(){logVoci();};
 
-/* ===== RICHIESTE ===== */
+/* ===== CERVELLO: collegamento ad Apps Script ===== */
+var STORIA=[];try{STORIA=JSON.parse(lsGet("jv_storia","[]"))||[];}catch(x){STORIA=[];}
+
+function cfg(){return {url:lsGet("jv_url","").trim(),tok:lsGet("jv_tok","").trim()};}
+function collegato(){var c=cfg();return RE_URL.test(c.url)&&c.tok.length>=20;}
+function ricorda(ruolo,testo){
+  STORIA.push({role:ruolo,content:String(testo).slice(0,2000)});
+  if(STORIA.length>20)STORIA=STORIA.slice(-20);
+  lsSet("jv_storia",JSON.stringify(STORIA));
+}
+function pulisciTesto(t){ /* toglie la formattazione: il testo viene anche letto ad alta voce */
+  return String(t||"").replace(/\*\*|__|`+/g,"").replace(/^\s{0,3}#{1,6}\s*/gm,"").replace(/^\s*[-*•]\s+/gm,"").replace(/\n{3,}/g,"\n\n").trim();
+}
+function cervello(dati,ms){
+  var c=cfg(),ctrl=window.AbortController?new AbortController():null,scaduto=false;
+  var tm=setTimeout(function(){scaduto=true;if(ctrl)ctrl.abort();},ms||45000);
+  dati.token=c.tok;
+  return fetch(c.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(dati),redirect:"follow",signal:ctrl?ctrl.signal:undefined})
+    .then(function(r){if(!r.ok)throw new Error("il cervello ha risposto con errore "+r.status+".");return r.text();})
+    .then(function(t){try{return JSON.parse(t);}catch(x){throw new Error("risposta non valida. Controlli l'indirizzo del cervello e che l'accesso sia impostato su Chiunque.");}})
+    .then(function(r){clearTimeout(tm);return r;},function(e){
+      clearTimeout(tm);
+      if(scaduto)throw new Error("il cervello non ha risposto in tempo.");
+      if(e&&/fetch|network|load failed|abort/i.test(String(e.message||e)))throw new Error("nessuna connessione con il cervello. Controlli internet, l'indirizzo, e che l'accesso sia su Chiunque.");
+      throw e;
+    });
+}
 function elabora(t,vocale){
   aggiungi(t,"io");
-  stato("elaborazione");
-  if(vocale)imposta("pensa");
-  log("Ricevuta la Sua richiesta.");log("Elaboro la richiesta...");
-  riga("ric","Nessuna ricerca eseguita: il motore non è ancora collegato.");
-  setTimeout(function(){
-    var r="Messaggio ricevuto, Signore. Per ora non posso ancora rispondere nel merito.";
-    stato("risposta");aggiungi(r,"j",true);
-    log("Risposta preparata. Cervello AI non ancora collegato.");
-    scrivi(ultimaEl,r);
-    if(vocale){
-      setTimeout(function(){
-        pronuncia(r,function(){
-          if(VOCE.conv){setTimeout(function(){if(VOCE.conv&&VOCE.fase==="idle"){log("Conversazione: riascolto.");ascolta(false);}},1000);}
-        });
-      },350);
-    }else{setTimeout(function(){if(VOCE.fase==="idle")stato("inattivo");},1800);}
-  },900);
+  if(!collegato()){
+    var m="Il mio cervello non è ancora collegato, Signore. Inserisca indirizzo e codice in Impostazioni.";
+    log("Cervello non collegato.");aggiungi(m,"j");scrivi(ultimaEl,m);
+    if(vocale)pronuncia(m,function(){});else{imposta("idle");stato("inattivo");}
+    return;
+  }
+  stato("elaborazione");if(vocale)imposta("pensa");
+  log("Invio la richiesta al cervello...");riga("ric","Domanda inviata al cervello");
+  var t0=Date.now();
+  cervello({tipo:"testo",testo:t,storia:STORIA.slice(-12)}).then(function(r){
+    if(!r.ok)throw new Error(r.errore||"errore sconosciuto.");
+    ricorda("user",t);rispondi(r,t0,vocale);
+  }).catch(function(e){errore(e,vocale);});
+}
+function rispondi(r,t0,vocale){
+  var testo=pulisciTesto(r.testo);
+  if(!testo)testo="Mi scusi, Signore, non ho una risposta questa volta.";
+  ricorda("assistant",testo);
+  var sec=((Date.now()-t0)/1000).toFixed(1);
+  log("Risposta da "+(r.modello||"cervello")+" in "+sec+" s.");
+  riga("ric","Risposta pronta in "+sec+" s ("+(r.modello||"cervello")+")");
+  stato("risposta");aggiungi(testo,"j",true);scrivi(ultimaEl,testo);
+  if(vocale){setTimeout(function(){pronuncia(testo,dopoVoce);},250);}
+  else{if(VOCE.fase==="pensa")imposta("idle");setTimeout(function(){if(VOCE.fase==="idle")stato("inattivo");},1800);}
+}
+function dopoVoce(){
+  if(VOCE.conv){setTimeout(function(){if(VOCE.conv&&VOCE.fase==="idle"){log("Conversazione: riascolto.");avviaAscolto();}},900);}
+}
+function errore(e,vocale){
+  var m=String((e&&e.message)||e||"errore sconosciuto.");
+  log("Problema: "+m);riga("ric","Errore: "+m);
+  var frase="Mi scusi, Signore: "+m.charAt(0).toLowerCase()+m.slice(1);
+  aggiungi(frase,"j");scrivi(ultimaEl,frase);
+  if(vocale){pronuncia(frase,function(){});}else{if(VOCE.fase==="pensa")imposta("idle");stato("inattivo");}
+}
+
+/* ===== ORECCHIE AI: registrazione della voce + trascrizione Whisper =====
+   Non usa il riconoscimento vocale di Safari (che si blocca dopo che JARVIS parla). */
+var REG={stato:"off",stream:null,rec:null,pezzi:[],ctx:null,src:null,an:null,giro:null,t0:0,parlato:false,ultimaVoce:0,maxRms:0,tMax:null,mime:""};
+function modoAI(){return collegato()&&!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder);}
+function avviaAscolto(){if(modoAI())registra();else ascolta(false);}
+function sceltaMime(){
+  var c=["audio/mp4","audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus"];
+  for(var i=0;i<c.length;i++){try{if(MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(c[i]))return c[i];}catch(x){}}
+  return "";
+}
+function registra(){
+  if(REG.stato!=="off")return;
+  REG.stato="avvio";imposta("ascolto");stato("ascolto");
+  VOCE.ttsId++;try{speechSynthesis.cancel();}catch(x){}
+  try{
+    if(!REG.ctx){var AC=window.AudioContext||window.webkitAudioContext;if(AC)REG.ctx=new AC();}
+    if(REG.ctx&&REG.ctx.state==="suspended")REG.ctx.resume();
+  }catch(x){REG.ctx=null;}
+  navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}}).then(function(st){
+    if(REG.stato!=="avvio"){st.getTracks().forEach(function(t){t.stop();});return;}
+    REG.stream=st;REG.pezzi=[];REG.parlato=false;REG.maxRms=0;REG.t0=Date.now();REG.ultimaVoce=0;
+    var mime=sceltaMime();
+    try{REG.rec=mime?new MediaRecorder(st,{mimeType:mime}):new MediaRecorder(st);}catch(x){REG.rec=new MediaRecorder(st);}
+    REG.mime=REG.rec.mimeType||mime||"audio/mp4";
+    REG.rec.ondataavailable=function(e){if(e.data&&e.data.size)REG.pezzi.push(e.data);};
+    REG.rec.onstop=fineRegistrazione;
+    REG.rec.start(250);
+    REG.stato="reg";log("In ascolto. Parli pure, Signore.");ultimaEl.textContent="La ascolto, Signore...";
+    misuraVoce();
+    REG.tMax=setTimeout(function(){if(REG.stato==="reg"){log("Tempo massimo: concludo.");fermaReg(true);}},30000);
+  }).catch(function(e){
+    REG.stato="off";chiudiMic();imposta("idle");stato("inattivo");
+    var n=e&&e.name;
+    var m=(n==="NotAllowedError"||n==="SecurityError")?"Il microfono non è autorizzato. Riapra l'app e tocchi Consenti.":"Non riesco ad aprire il microfono ("+(n||"errore")+").";
+    log(m);ultimaEl.textContent=m;
+  });
+}
+/* capisce da solo quando Lei inizia e smette di parlare */
+function misuraVoce(){
+  if(!REG.ctx||!REG.stream)return; /* senza misura: si chiude con il tocco o con il tempo massimo */
+  try{REG.src=REG.ctx.createMediaStreamSource(REG.stream);REG.an=REG.ctx.createAnalyser();REG.an.fftSize=1024;REG.src.connect(REG.an);}
+  catch(x){REG.an=null;return;}
+  var buf=new Float32Array(REG.an.fftSize),fondo=0.005;
+  (function giro(){
+    if(REG.stato!=="reg"||!REG.an)return;
+    REG.an.getFloatTimeDomainData(buf);
+    var q=0;for(var i=0;i<buf.length;i++)q+=buf[i]*buf[i];
+    var rms=Math.sqrt(q/buf.length),ora=Date.now(),dt=ora-REG.t0;
+    if(rms>REG.maxRms)REG.maxRms=rms;
+    if(rms<fondo*2)fondo=fondo*0.9+rms*0.1;            /* rumore di fondo, aggiornato piano */
+    if(rms>Math.max(0.018,fondo*3)){
+      if(!REG.parlato){REG.parlato=true;log("Sento la Sua voce.");}
+      REG.ultimaVoce=ora;
+    }
+    if(REG.parlato&&ora-REG.ultimaVoce>1300){log("Silenzio: concludo l'ascolto.");fermaReg(true);return;}
+    if(!REG.parlato&&dt>9000){
+      if(REG.maxRms<0.000001){ /* la misura non funziona su questo telefono: non mi fido, invio comunque */
+        if(dt>12000){log("Misura del volume non disponibile: invio quanto registrato.");fermaReg(true);return;}
+      }else{log("Nessuna voce in 9 secondi.");fermaReg(false);return;}
+    }
+    REG.giro=setTimeout(giro,60);
+  })();
+}
+function fermaReg(invia){
+  if(REG.stato!=="reg")return;
+  REG.stato=invia?"invio":"annulla";
+  clearTimeout(REG.tMax);clearTimeout(REG.giro);
+  try{if(REG.rec&&REG.rec.state!=="inactive")REG.rec.stop();else fineRegistrazione();}catch(x){fineRegistrazione();}
+}
+function chiudiMic(){
+  try{if(REG.src)REG.src.disconnect();}catch(x){}
+  REG.src=null;REG.an=null;
+  if(REG.stream){REG.stream.getTracks().forEach(function(t){try{t.stop();}catch(x){}});REG.stream=null;}
+}
+function fineRegistrazione(){
+  if(REG.stato!=="invio"&&REG.stato!=="annulla")return;
+  var invia=REG.stato==="invio",pezzi=REG.pezzi,mime=REG.mime,durata=Date.now()-REG.t0;
+  REG.pezzi=[];chiudiMic();REG.rec=null;REG.stato="off";
+  if(!invia){imposta("idle");stato("inattivo");ultimaEl.textContent="Non ho sentito nulla, Signore.";return;}
+  var blob=new Blob(pezzi,{type:mime});
+  if(blob.size<1500||durata<600){imposta("idle");stato("inattivo");log("Registrazione troppo breve.");ultimaEl.textContent="Non ho sentito nulla, Signore.";return;}
+  imposta("pensa");stato("elaborazione");
+  log("Trascrivo la Sua voce ("+Math.max(1,Math.round(blob.size/1024))+" KB)...");riga("ric","Trascrivo la voce con Whisper");
+  ultimaEl.textContent="Elaboro...";
+  var t0=Date.now();
+  aBase64(blob).then(function(b64){return cervello({tipo:"audio",audio:b64,mime:mime,storia:STORIA.slice(-12)},60000);})
+  .then(function(r){
+    if(!r.ok)throw new Error(r.errore||"errore sconosciuto.");
+    if(!r.trascritto){imposta("idle");stato("inattivo");log("Nessuna parola riconosciuta.");ultimaEl.textContent="Non ho capito, Signore. Può ripetere?";return;}
+    log("Ho capito: "+r.trascritto);aggiungi(r.trascritto,"io");ricorda("user",r.trascritto);
+    rispondi(r,t0,true);
+  }).catch(function(e){errore(e,true);});
+}
+function aBase64(blob){
+  return new Promise(function(ok,ko){
+    var fr=new FileReader();
+    fr.onload=function(){var u=String(fr.result);ok(u.slice(u.indexOf(",")+1));};
+    fr.onerror=function(){ko(new Error("lettura dell'audio non riuscita."));};
+    fr.readAsDataURL(blob);
+  });
+}
+function tapAI(){
+  if(REG.stato==="reg"){log("Ascolto concluso a mano.");fermaReg(true);return;}
+  if(REG.stato==="avvio"){REG.stato="off";imposta("idle");stato("inattivo");log("Ascolto annullato.");return;}
+  if(REG.stato!=="off")return;          /* sta inviando: attendere */
+  if(VOCE.fase==="pensa")return;
+  if(VOCE.fase==="parla"){fermaVoce();log("Voce interrotta.");}
+  sblocca();                            /* prepara la voce per la risposta */
+  registra();
 }
 function invia(){var t=testo.value.trim();if(!t)return;testo.value="";elabora(t,false);}
 document.getElementById("invia").onclick=invia;
@@ -472,6 +637,7 @@ testo.addEventListener("keydown",function(e){if(e.key==="Enter")invia();});
 
 /* ===== PULSANTI ===== */
 btn.onclick=function(){
+  if(modoAI()&&VOCE.rec===null){tapAI();return;} /* microfono AI; altrimenti riconoscimento di Safari */
   if(VOCE.fase!=="ascolto")sblocca(); /* durante l'ascolto non tocco la voce: potrebbe disturbare il microfono */
   if(VOCE.inAttesa)return;
   if(VOCE.fase==="ascolto"){
@@ -540,6 +706,26 @@ var elVel=document.getElementById("sliderVel"),elTono=document.getElementById("s
 elVel.value=numLs("jv_vel",0.95);elTono.value=numLs("jv_tono",1);
 elVel.oninput=function(){lsSet("jv_vel",elVel.value);};
 elTono.oninput=function(){lsSet("jv_tono",elTono.value);};
+/* collegamento al cervello */
+var elCfg=document.getElementById("cfgTesto"),elCfgStato=document.getElementById("cfgStato");
+function mostraCfg(){
+  var c=cfg(),el=document.getElementById("cfgAttuale");
+  el.textContent=collegato()?("Collegato. Indirizzo: …"+c.url.slice(-22)+" | codice: ••••"+c.tok.slice(-4)+". Microfono: "+(modoAI()?"trascrizione AI (Whisper).":"riconoscimento di Safari.")):"Non collegato: JARVIS non può ancora rispondere.";
+}
+document.getElementById("cfgProva").onclick=function(){
+  var t=elCfg.value,u=(t.match(RE_URL)||[""])[0],k=(t.match(/\b[0-9a-f]{64}\b/i)||[""])[0];
+  if(!u&&!k){elCfgStato.className="nota ko";elCfgStato.textContent="Non trovo né l'indirizzo né il codice nel testo incollato.";return;}
+  if(u)lsSet("jv_url",u);if(k)lsSet("jv_tok",k);
+  elCfg.value="";mostraCfg();
+  if(!collegato()){elCfgStato.className="nota ko";elCfgStato.textContent=!RE_URL.test(cfg().url)?"Manca l'indirizzo: deve iniziare con https://script.google.com/macros/s/ e finire con /exec.":"Manca il codice di collegamento (64 caratteri).";return;}
+  elCfgStato.className="nota";elCfgStato.textContent="Provo il collegamento...";
+  cervello({tipo:"ping"},25000).then(function(r){
+    elCfgStato.className="nota "+(r.ok?"ok":"ko");elCfgStato.textContent=(r.ok?"✓ ":"✗ ")+(r.ok?r.testo:r.errore);
+    log("Prova collegamento: "+(r.ok?"riuscita.":"non riuscita: "+r.errore));
+  }).catch(function(e){elCfgStato.className="nota ko";elCfgStato.textContent="✗ "+e.message;log("Prova collegamento non riuscita: "+e.message);});
+};
+document.getElementById("cfgScollega").onclick=function(){lsSet("jv_url","");lsSet("jv_tok","");mostraCfg();elCfgStato.className="nota";elCfgStato.textContent="Scollegato.";log("Cervello scollegato.");};
+document.getElementById("cfgStoria").onclick=function(){STORIA=[];lsSet("jv_storia","[]");elCfgStato.className="nota";elCfgStato.textContent="Conversazione cancellata: JARVIS riparte da zero.";log("Conversazione cancellata.");};
 document.getElementById("aggVoci").onclick=function(){logVoci();mostraVoci();};
 document.getElementById("provaVoce").onclick=function(){parlaProva(sceltaVoce());};
 /* se la pagina va in secondo piano mentre ascolta */
@@ -548,6 +734,8 @@ document.addEventListener("visibilitychange",function(){
     var r=VOCE.rec;VOCE.rec=null;pulisciT();try{r.abort();}catch(x){}
     imposta("idle");stato("inattivo");log("Pagina in secondo piano: ascolto fermato.");
   }
+  if(document.hidden&&REG.stato==="reg"){fermaReg(false);log("Pagina in secondo piano: ascolto fermato.");}
+  if(document.hidden&&REG.stato==="avvio"){REG.stato="off";imposta("idle");stato("inattivo");}
   if(document.hidden)fermaVoce();
 });
 </script>
