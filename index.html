@@ -243,13 +243,19 @@ var sal=(h<5||h>=19)?"Buonasera":(h<13?"Buongiorno":"Buon pomeriggio");
 scrivi(document.getElementById("ultima"),sal+", Signore. Sono a Sua disposizione.");
 
 /* voce */
+function sblocca(){
+  if(!window.speechSynthesis)return;
+  try{var u=new SpeechSynthesisUtterance(" ");u.volume=0;speechSynthesis.speak(u);}catch(x){}
+}
 function pronuncia(t){
   if(!window.speechSynthesis){stato("inattivo");return;}
   var u=new SpeechSynthesisUtterance(t);u.lang="it-IT";u.rate=0.95;
   var vs=speechSynthesis.getVoices().filter(function(v){return v.lang&&v.lang.toLowerCase().indexOf("it")===0;});
   var m=vs.filter(function(v){return /luca|male|uomo/i.test(v.name);})[0]||vs[0];
   if(m)u.voice=m;
-  u.onend=u.onerror=function(){stato("inattivo");};
+  u.onstart=function(){log("Voce avviata.");};
+  u.onerror=function(e){log("Errore voce: "+e.error);stato("inattivo");};
+  u.onend=function(){log("Voce terminata.");stato("inattivo");};
   speechSynthesis.cancel();speechSynthesis.speak(u);
 }
 function elabora(t,vocale){
@@ -262,7 +268,7 @@ function elabora(t,vocale){
     stato("risposta");aggiungi(r,"j",true);
     log("Risposta preparata. Cervello AI non ancora collegato.");
     scrivi(document.getElementById("ultima"),r);
-    if(vocale){pronuncia(r);}else{setTimeout(function(){stato("inattivo");},1800);}
+    if(vocale){setTimeout(function(){pronuncia(r);},350);}else{setTimeout(function(){stato("inattivo");},1800);}
   },900);
 }
 function invia(){var t=testo.value.trim();if(!t)return;testo.value="";elabora(t,false);}
@@ -271,6 +277,7 @@ testo.addEventListener("keydown",function(e){if(e.key==="Enter")invia();});
 
 var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 document.getElementById("btnparla").onclick=function(){
+  sblocca();
   if(!SR){
     log("Riconoscimento vocale non disponibile in questa pagina.");
     aggiungi("Il microfono non è disponibile in questa pagina, Signore. Usi il microfono della tastiera.","j");
