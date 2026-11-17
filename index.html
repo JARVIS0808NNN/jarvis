@@ -90,6 +90,12 @@ h2{font-size:20px;font-weight:500;letter-spacing:.04em}
 .voceop.sel{border-color:var(--red)}
 .imp label{display:block;font-size:14px;color:var(--dim);margin:14px 0 4px}
 .imp input[type=range]{width:100%;accent-color:var(--red)}
+.azbtn{display:block;text-align:center;text-decoration:none;background:var(--red);color:#fff;border-radius:14px;padding:13px 16px;font-size:16px;margin:4px 0;box-shadow:0 0 18px rgba(255,74,61,.35)}
+.azbtn:active{transform:scale(.98)}
+#azioniHome{flex:none;margin:-4px 0 12px}
+.notif{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:11px 13px;margin-bottom:8px;line-height:1.45;font-size:14px}
+.notif b{color:var(--red);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.notif small{display:block;color:var(--dim);font-size:12px;margin-top:3px}
 .campo{display:block;width:100%;margin-top:6px;background:var(--card);border:1px solid var(--line);border-radius:12px;color:var(--text);padding:12px;font-size:16px;font-family:ui-monospace,Menlo,monospace;resize:vertical}
 .imp .ok{color:#7fd28a}.imp .ko{color:var(--red)}
 button:focus-visible,input:focus-visible{outline:2px solid var(--crimson);outline-offset:2px}
@@ -110,6 +116,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--crimson);outlin
   <div class="orbwrap"><div class="orb" id="orb" data-s="inattivo"><i></i><i></i><i></i><b></b></div></div>
   <button id="btnparla">PARLA</button>
   <div class="ultima" id="ultima" aria-live="polite"></div>
+  <div id="azioniHome"></div>
   <button class="demo" id="btnConv" style="margin:0 auto 12px">Conversazione continua: spenta</button>
   <div class="pannelli" id="pannelli"></div>
   <button class="demo" id="btnDemo">Mostra una dimostrazione</button>
@@ -148,6 +155,13 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--crimson);outlin
   </div>
 </section>
 
+<section class="view" id="notifiche">
+  <div class="top"><button class="back" data-go="home">Indietro</button><h2>Notifiche</h2><span></span></div>
+  <p class="nota" id="notStato" style="text-align:left;padding:12px 0 8px"></p>
+  <div id="notElenco" style="flex:1;overflow-y:auto"></div>
+  <button class="demo" id="notAggiorna">Aggiorna</button>
+</section>
+
 <section class="view" id="altro">
   <div class="top"><button class="back" data-go="home">Indietro</button><h2 id="titolo"></h2><span></span></div>
   <p class="vuotoTxt" id="descr"></p>
@@ -156,13 +170,13 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--crimson);outlin
 <script>
 "use strict";
 var RE_URL=/https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec/;
-var VERSIONE="0.10 - 17/11/2026";
+var VERSIONE="0.11 - 17/11/2026";
 var SEZIONI=[
  ["home","Home","Cerchio e pannelli in diretta",""],
  ["attivita","Attività","Registro di JARVIS",""],
  ["chat","Chat","Parli con JARVIS",""],
- ["gmail","Gmail","Email e priorità","Questa sezione mostrerà le email importanti. Sarà attivata dopo il collegamento sicuro a Gmail."],
- ["notifiche","Notifiche","Avvisi di JARVIS","Qui comparirà lo storico degli avvisi. Arriverà con le notifiche push."],
+ ["gmail","Gmail","Email e priorità","Chieda a JARVIS a voce: «ci sono email importanti?», «leggimi l'ultima email di Marco», «rispondi che arrivo alle 5». Prepara sempre una bozza e la invia solo dopo il Suo sì. Le email urgenti le trova in Notifiche."],
+ ["notifiche","Notifiche","Email urgenti e avvisi",""],
  ["posizione","Posizione","Dove si trova","Posizione e territorio saranno attivati in una fase successiva, solo con la Sua autorizzazione."],
  ["dispositivi","Dispositivi","Casa e computer","Il controllo dei dispositivi arriverà in una fase successiva."],
  ["business","Business","Idee e progetti","Qui raccoglieremo le Sue idee di business. Sarà una delle prime sezioni attivate."],
@@ -196,6 +210,7 @@ function vai(id){
 function apri(s){
   menu(false);
   if(s[0]==="impostazioni"){vai("impostazioni");mostraVoci();mostraCfg();return;}
+  if(s[0]==="notifiche"){vai("notifiche");caricaNotifiche();return;}
   if(["home","chat","attivita"].indexOf(s[0])>=0){vai(s[0]);return;}
   document.getElementById("titolo").textContent=s[1];
   document.getElementById("descr").textContent=s[3];
@@ -487,7 +502,41 @@ function cervello(dati,ms){
       throw e;
     });
 }
+/* pulsante per WhatsApp, SMS o chiamata: l'invio lo conferma Lei con il tocco */
+var azioniHome=document.getElementById("azioniHome");
+var RE_AZIONE=/^(https:\/\/wa\.me\/\d{7,15}(\?text=[^\s<>"]*)?|sms:\+\d{7,15}(&body=[^\s<>"]*)?|tel:\+\d{7,15})$/;
+function pulsanteAzione(etichetta,url){
+  if(!RE_AZIONE.test(url)){log("Pulsante scartato: indirizzo non sicuro.");return;}
+  [azioniHome,msgs].forEach(function(box){
+    var b=document.createElement("a");b.className="azbtn";b.href=url;b.textContent=etichetta;
+    if(url.indexOf("https:")===0){b.target="_blank";b.rel="noopener noreferrer";}
+    b.onclick=function(){log("Aperto: "+etichetta+".");};
+    box.appendChild(b);
+  });
+  msgs.scrollTop=msgs.scrollHeight;
+}
+/* schermata Notifiche: email segnalate dalla Guardia Gmail */
+function caricaNotifiche(){
+  var st=document.getElementById("notStato"),el=document.getElementById("notElenco");
+  if(!collegato()){st.textContent="Il cervello non è collegato: lo imposti in Impostazioni.";el.innerHTML="";return;}
+  st.textContent="Carico le notifiche...";
+  cervello({tipo:"notifiche"},25000).then(function(r){
+    if(!r.ok)throw new Error(r.errore||"errore sconosciuto.");
+    st.textContent="Guardia Gmail: "+(r.guardia?"accesa, controlla ogni 15 minuti.":"spenta.")+" "+(r.segnalate.length?"":"Nessuna email segnalata finora.");
+    el.innerHTML="";
+    r.segnalate.forEach(function(n){
+      var d=document.createElement("div");d.className="notif";
+      var b=document.createElement("b");b.textContent=n.livello==="urgente"?"Urgente":"Importante";
+      var t=document.createElement("div");t.textContent=(n.da||"")+": "+(n.oggetto||"");
+      var m=document.createElement("small");m.textContent=(n.motivo?n.motivo+" · ":"")+(n.quando||"");
+      d.appendChild(b);d.appendChild(t);d.appendChild(m);el.appendChild(d);
+    });
+  }).catch(function(e){st.textContent="Non riesco a caricare le notifiche: "+e.message;});
+}
+document.getElementById("notAggiorna").onclick=caricaNotifiche;
+
 function elabora(t,vocale){
+  azioniHome.innerHTML="";
   aggiungi(t,"io");
   if(!collegato()){
     var m="Il mio cervello non è ancora collegato, Signore. Inserisca indirizzo e codice in Impostazioni.";
@@ -512,6 +561,7 @@ function rispondi(r,t0,vocale){
     var area=/^agenda/.test(a.strumento)?"Agenda":/^promemoria/.test(a.strumento)?"Promemoria":"Azione";
     var t=area+": "+String(a.sintesi||"eseguito");
     log((a.ok?"":"Non riuscito. ")+t);riga("ric",t,a.ok?"":"⚠");
+    if(a.ok&&a.apri)pulsanteAzione(a.etichetta||"Apri",a.apri);
   });
   log("Risposta da "+(r.modello||"cervello")+" in "+sec+" s.");
   riga("ric","Risposta pronta in "+sec+" s ("+(r.modello||"cervello")+")");
@@ -611,7 +661,7 @@ function fineRegistrazione(){
   if(!invia){imposta("idle");stato("inattivo");ultimaEl.textContent="Non ho sentito nulla, Signore.";return;}
   var blob=new Blob(pezzi,{type:mime});
   if(blob.size<1500||durata<600){imposta("idle");stato("inattivo");log("Registrazione troppo breve.");ultimaEl.textContent="Non ho sentito nulla, Signore.";return;}
-  imposta("pensa");stato("elaborazione");
+  imposta("pensa");stato("elaborazione");azioniHome.innerHTML="";
   log("Trascrivo la Sua voce ("+Math.max(1,Math.round(blob.size/1024))+" KB)...");riga("ric","Trascrivo la voce con Whisper");
   ultimaEl.textContent="Elaboro...";
   var t0=Date.now();
