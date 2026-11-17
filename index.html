@@ -156,7 +156,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--crimson);outlin
 <script>
 "use strict";
 var RE_URL=/https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec/;
-var VERSIONE="0.9 - 17/11/2026";
+var VERSIONE="0.10 - 17/11/2026";
 var SEZIONI=[
  ["home","Home","Cerchio e pannelli in diretta",""],
  ["attivita","Attività","Registro di JARVIS",""],
@@ -404,7 +404,11 @@ function numLs(k,d){var n=parseFloat(lsGet(k,""));return isNaN(n)?d:n;}
 var VOCE_SCELTA=null,ULTIMO_ELENCO="";
 function vociItaliane(){
   var tutte=window.speechSynthesis?speechSynthesis.getVoices():[];
-  return tutte.filter(function(v){return v.lang&&v.lang.toLowerCase().replace("_","-").indexOf("it")===0;});
+  var visti={};
+  return tutte.filter(function(v){
+    if(!v.lang||v.lang.toLowerCase().replace("_","-").indexOf("it")!==0||visti[v.name])return false;
+    visti[v.name]=true;return true; /* niente voci doppie con lo stesso nome */
+  });
 }
 function sceltaVoce(){
   var vs=vociItaliane();
@@ -504,6 +508,11 @@ function rispondi(r,t0,vocale){
   if(!testo)testo="Mi scusi, Signore, non ho una risposta questa volta.";
   ricorda("assistant",testo);
   var sec=((Date.now()-t0)/1000).toFixed(1);
+  (Array.isArray(r.azioni)?r.azioni:[]).forEach(function(a){ /* azioni reali eseguite dal cervello */
+    var area=/^agenda/.test(a.strumento)?"Agenda":/^promemoria/.test(a.strumento)?"Promemoria":"Azione";
+    var t=area+": "+String(a.sintesi||"eseguito");
+    log((a.ok?"":"Non riuscito. ")+t);riga("ric",t,a.ok?"":"⚠");
+  });
   log("Risposta da "+(r.modello||"cervello")+" in "+sec+" s.");
   riga("ric","Risposta pronta in "+sec+" s ("+(r.modello||"cervello")+")");
   stato("risposta");aggiungi(testo,"j",true);scrivi(ultimaEl,testo);
