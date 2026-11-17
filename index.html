@@ -145,7 +145,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--crimson);outlin
 
 <script>
 "use strict";
-var VERSIONE="0.7 - 17/11/2026";
+var VERSIONE="0.8 - 17/11/2026";
 var SEZIONI=[
  ["home","Home","Cerchio e pannelli in diretta",""],
  ["attivita","Attività","Registro di JARVIS",""],
@@ -278,8 +278,8 @@ scrivi(document.getElementById("ultima"),sal+", Signore. Sono a Sua disposizione
 var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 var btn=document.getElementById("btnparla");
 var ultimaEl=document.getElementById("ultima");
-var VOCE={fase:"idle",rec:null,tent:0,parz:"",finito:false,errore:false,manuale:false,conv:false,ttsId:0,tStart:null,tSil:null,tMax:null,tAudio:null,tRetry:null,tTts:null,utt:null,sentito:false,fineTTS:0,inAttesa:false};
-var ETICHETTE={idle:"PARLA",ascolto:"TOCCA: HO FINITO",pensa:"ELABORO...",parla:"INTERROMPI"};
+var VOCE={fase:"idle",rec:null,tent:0,parz:"",finito:false,errore:false,manuale:false,conv:false,ttsId:0,tStart:null,tSil:null,tMax:null,tAudio:null,tRetry:null,tTts:null,utt:null,sentito:false,audioOk:false,fineTTS:0,inAttesa:false};
+var ETICHETTE={idle:"PARLA",ascolto:"IN ASCOLTO · TOCCA PER CHIUDERE",pensa:"ELABORO...",parla:"INTERROMPI"};
 function imposta(f){VOCE.fase=f;btn.textContent=ETICHETTE[f];}
 
 /* statistiche: servono a capire perché a volte non Ti sente */
@@ -295,7 +295,7 @@ function fallito(msg){
   imposta("idle");stato("inattivo");log(msg);ultimaEl.textContent=msg;
 }
 function riprova(motivo,max){
-  if(VOCE.tent<max){log(motivo+": riprovo.");clearTimeout(VOCE.tRetry);VOCE.tRetry=setTimeout(function(){ascolta(true);},450);}
+  if(VOCE.tent<max){log(motivo+": riprovo.");clearTimeout(VOCE.tRetry);VOCE.tRetry=setTimeout(function(){ascolta(true);},700);}
   else{fallito(motivo+". Tocchi di nuovo PARLA, Signore.");}
 }
 function chiudi(testo){
@@ -315,7 +315,7 @@ function ascolta(retry){
   if(VOCE.rec){var vecchio=VOCE.rec;VOCE.rec=null;try{vecchio.abort();}catch(x){}} /* mai due microfoni aperti insieme */
   if(!retry)VOCE.tent=0;
   VOCE.tent++;statInc("tent");
-  VOCE.parz="";VOCE.finito=false;VOCE.errore=false;VOCE.manuale=false;VOCE.sentito=false;
+  VOCE.parz="";VOCE.finito=false;VOCE.errore=false;VOCE.manuale=false;VOCE.sentito=false;VOCE.audioOk=false;
   VOCE.ttsId++;try{speechSynthesis.cancel();}catch(x){}
   var r=new SR();VOCE.rec=r;
   r.lang="it-IT";r.interimResults=true;r.continuous=false;r.maxAlternatives=1;
@@ -323,14 +323,24 @@ function ascolta(retry){
   log("In ascolto (tentativo "+VOCE.tent+")...");
   r.onstart=function(){
     if(VOCE.rec!==r)return;clearTimeout(VOCE.tStart);log("Microfono pronto.");
+    /* microfono sordo: nessun segnale audio e nessuna voce entro 4 secondi */
     VOCE.tAudio=setTimeout(function(){
-      if(VOCE.rec!==r)return;
-      statInc("silenzio");log("Nessun audio ricevuto: ricomincio.");
+      if(VOCE.rec!==r||VOCE.audioOk||VOCE.sentito||VOCE.parz)return;
+      statInc("silenzio");log("Microfono sordo: lo riapro.");
       VOCE.rec=null;try{r.abort();}catch(x){}
-      riprova("Ascolto senza audio",5);
-    },2500);
+      riprova("Microfono senza audio",3);
+    },4000);
   };
-  r.onaudiostart=function(){if(VOCE.rec!==r)return;log("Audio in ingresso attivo.");};
+  r.onaudiostart=function(){
+    if(VOCE.rec!==r)return;VOCE.audioOk=true;clearTimeout(VOCE.tAudio);log("Audio in ingresso attivo.");
+    /* il microfono funziona: aspetto con calma che Lei parli, fino a 10 secondi */
+    VOCE.tAudio=setTimeout(function(){
+      if(VOCE.rec!==r||VOCE.sentito||VOCE.parz)return;
+      log("Nessuna voce in 10 secondi: chiudo l'ascolto.");
+      VOCE.rec=null;pulisciT();try{r.abort();}catch(x){}
+      imposta("idle");stato("inattivo");ultimaEl.textContent="Non ho sentito nulla, Signore.";
+    },10000);
+  };
   r.onspeechstart=function(){if(VOCE.rec!==r)return;clearTimeout(VOCE.tAudio);VOCE.sentito=true;log("Sento la Sua voce.");};
   r.onresult=function(e){
     if(VOCE.rec!==r)return;
@@ -344,7 +354,7 @@ function ascolta(retry){
     else{VOCE.tSil=setTimeout(function(){if(VOCE.rec!==r)return;log("Silenzio: concludo l'ascolto.");try{r.stop();}catch(x){}},1700);}
   };
   r.onerror=function(e){
-    if(VOCE.rec!==r||VOCE.finito)return;
+    if(VOCE.rec!==r||VOCE.finito||VOCE.errore)return;
     VOCE.errore=true;var c=e.error;log("Errore microfono: "+c);
     if(c==="aborted"&&VOCE.manuale)return;
     if(c==="not-allowed"||c==="service-not-allowed"){fallito("Il microfono è bloccato. Riapra l'app e tocchi Consenti, oppure controlli Impostazioni, Safari, Microfono.");return;}
@@ -466,10 +476,11 @@ btn.onclick=function(){
   if(VOCE.inAttesa)return;
   if(VOCE.fase==="ascolto"){
     var r1=VOCE.rec;
-    if(!VOCE.sentito&&VOCE.parz.length<2&&!VOCE.manuale){ /* nessuna voce ancora: il tocco riavvia l'ascolto */
-      log("Nessuna voce finora: riavvio l'ascolto.");
+    if(!VOCE.sentito&&VOCE.parz.length<2){ /* nessuna voce ancora: il tocco annulla subito */
+      log("Ascolto annullato.");
       VOCE.rec=null;pulisciT();try{r1.abort();}catch(x){}
-      VOCE.inAttesa=true;setTimeout(function(){VOCE.inAttesa=false;ascolta(false);},350);
+      imposta("idle");stato("inattivo");ultimaEl.textContent="Ascolto annullato. Tocchi PARLA quando vuole, Signore.";
+      VOCE.fineTTS=Date.now(); /* piccola pausa prima del prossimo avvio: evita "microfono occupato" */
       return;
     }
     if(VOCE.manuale){ /* secondo tocco: chiusura forzata */
