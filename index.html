@@ -248,7 +248,7 @@ scrivi(document.getElementById("ultima"),sal+", Signore. Sono a Sua disposizione
 var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 var btn=document.getElementById("btnparla");
 var ultimaEl=document.getElementById("ultima");
-var VOCE={fase:"idle",rec:null,tent:0,parz:"",finito:false,errore:false,manuale:false,conv:false,ttsId:0,tStart:null,tSil:null,tMax:null};
+var VOCE={fase:"idle",rec:null,tent:0,parz:"",finito:false,errore:false,manuale:false,conv:false,ttsId:0,tStart:null,tSil:null,tMax:null,tAudio:null,fineTTS:0,inAttesa:false};
 var ETICHETTE={idle:"PARLA",ascolto:"TOCCA: HO FINITO",pensa:"ELABORO...",parla:"INTERROMPI"};
 function imposta(f){VOCE.fase=f;btn.textContent=ETICHETTE[f];}
 
@@ -256,10 +256,10 @@ function imposta(f){VOCE.fase=f;btn.textContent=ETICHETTE[f];}
 var STAT={};
 try{STAT=JSON.parse(localStorage.getItem("jv_stat")||"{}");}catch(x){STAT={};}
 function statInc(k){STAT[k]=(STAT[k]||0)+1;try{localStorage.setItem("jv_stat",JSON.stringify(STAT));}catch(x){}}
-function statTxt(){return "Microfono: riuscite "+(STAT.ok||0)+" su "+(STAT.tent||0)+" avvii | nessuna voce "+(STAT.nospeech||0)+" | occupato "+(STAT.audio||0)+" | rete "+(STAT.net||0)+" | avvio bloccato "+(STAT.hang||0);}
+function statTxt(){return "Microfono: riuscite "+(STAT.ok||0)+" su "+(STAT.tent||0)+" avvii | nessuna voce "+(STAT.nospeech||0)+" | occupato "+(STAT.audio||0)+" | rete "+(STAT.net||0)+" | avvio bloccato "+(STAT.hang||0)+" | senza audio "+(STAT.silenzio||0);}
 if(STAT.tent)log("Statistiche precedenti. "+statTxt());
 
-function pulisciT(){clearTimeout(VOCE.tStart);clearTimeout(VOCE.tSil);clearTimeout(VOCE.tMax);}
+function pulisciT(){clearTimeout(VOCE.tStart);clearTimeout(VOCE.tSil);clearTimeout(VOCE.tMax);clearTimeout(VOCE.tAudio);}
 function fallito(msg){
   pulisciT();VOCE.rec=null;VOCE.conv=false;aggConv();
   imposta("idle");stato("inattivo");log(msg);ultimaEl.textContent=msg;
@@ -290,13 +290,21 @@ function ascolta(retry){
   r.lang="it-IT";r.interimResults=true;r.continuous=false;r.maxAlternatives=1;
   imposta("ascolto");stato("ascolto");
   log("In ascolto (tentativo "+VOCE.tent+")...");
-  r.onstart=function(){if(VOCE.rec!==r)return;clearTimeout(VOCE.tStart);log("Microfono pronto.");};
+  r.onstart=function(){
+    if(VOCE.rec!==r)return;clearTimeout(VOCE.tStart);log("Microfono pronto.");
+    VOCE.tAudio=setTimeout(function(){
+      if(VOCE.rec!==r)return;
+      statInc("silenzio");log("Nessun audio ricevuto: ricomincio.");
+      VOCE.rec=null;try{r.abort();}catch(x){}
+      riprova("Ascolto senza audio",3);
+    },8000);
+  };
   r.onspeechstart=function(){if(VOCE.rec!==r)return;log("Sento la Sua voce.");};
   r.onresult=function(e){
     if(VOCE.rec!==r)return;
     var full="",fin=false;
     for(var i=0;i<e.results.length;i++){full+=e.results[i][0].transcript;fin=e.results[i].isFinal;}
-    VOCE.parz=full.trim();
+    VOCE.parz=full.trim();clearTimeout(VOCE.tAudio);
     if(ultimaEl._iv){clearInterval(ultimaEl._iv);ultimaEl._iv=null;}
     ultimaEl.classList.remove("cur");ultimaEl.textContent=VOCE.parz;
     clearTimeout(VOCE.tSil);
@@ -337,17 +345,32 @@ function sblocca(){
   if(!window.speechSynthesis)return;
   try{var u=new SpeechSynthesisUtterance(" ");u.volume=0;speechSynthesis.speak(u);}catch(x){}
 }
-function sceltaVoce(){
-  var vs=(window.speechSynthesis?speechSynthesis.getVoices():[]).filter(function(v){return v.lang&&v.lang.toLowerCase().replace("_","-").indexOf("it")===0;});
-  return vs.filter(function(v){return /luca/i.test(v.name);})[0]
-      ||vs.filter(function(v){return /premium|enhanced|migliorata/i.test(v.name);})[0]
-      ||vs[0]||null;
+var VOCE_SCELTA=null;
+function vociItaliane(){
+  var tutte=window.speechSynthesis?speechSynthesis.getVoices():[];
+  return tutte.filter(function(v){return v.lang&&v.lang.toLowerCase().replace("_","-").indexOf("it")===0;});
 }
+function sceltaVoce(){
+  var vs=vociItaliane();
+  if(!vs.length)return VOCE_SCELTA;
+  var salvata=null;try{salvata=localStorage.getItem("jv_voce");}catch(x){}
+  var v=(salvata&&vs.filter(function(x){return x.name===salvata;})[0])
+     ||vs.filter(function(x){return /luca/i.test(x.name);})[0]
+     ||vs.filter(function(x){return /premium|enhanced|migliorata/i.test(x.name);})[0]
+     ||vs[0];
+  if(v){VOCE_SCELTA=v;if(!salvata){try{localStorage.setItem("jv_voce",v.name);}catch(x){}}}
+  return VOCE_SCELTA;
+}
+setTimeout(function(){
+  var n=vociItaliane().map(function(v){return v.name;});
+  log("Voci italiane disponibili: "+(n.length?n.join(", "):"nessuna"));
+},1500);
 function fineVoce(fine){
+  VOCE.fineTTS=Date.now();
   if(VOCE.fase==="parla"){imposta("idle");stato("inattivo");}
   if(fine)fine();
 }
-function fermaVoce(){VOCE.ttsId++;try{speechSynthesis.cancel();}catch(x){}if(VOCE.fase==="parla"){imposta("idle");stato("inattivo");}}
+function fermaVoce(){VOCE.fineTTS=Date.now();VOCE.ttsId++;try{speechSynthesis.cancel();}catch(x){}if(VOCE.fase==="parla"){imposta("idle");stato("inattivo");}}
 function pronuncia(t,fine){
   if(!window.speechSynthesis){fineVoce(fine);return;}
   var id=++VOCE.ttsId;
@@ -360,7 +383,7 @@ function pronuncia(t,fine){
     var u=new SpeechSynthesisUtterance(parti[i++].trim());
     u.lang="it-IT";u.rate=0.95;
     var v=sceltaVoce();if(v)u.voice=v;
-    if(i===1)u.onstart=function(){if(id===VOCE.ttsId)log("Voce avviata.");};
+    if(i===1)u.onstart=function(){if(id===VOCE.ttsId)log("Voce avviata: "+(v?v.name:"predefinita")+".");};
     u.onend=prossima;
     u.onerror=function(e){if(id!==VOCE.ttsId)return;log("Errore voce: "+e.error);fineVoce(fine);};
     speechSynthesis.speak(u);
@@ -385,7 +408,7 @@ function elabora(t,vocale){
     if(vocale){
       setTimeout(function(){
         pronuncia(r,function(){
-          if(VOCE.conv){setTimeout(function(){if(VOCE.conv&&VOCE.fase==="idle"){log("Conversazione: riascolto.");ascolta(false);}},800);}
+          if(VOCE.conv){setTimeout(function(){if(VOCE.conv&&VOCE.fase==="idle"){log("Conversazione: riascolto.");ascolta(false);}},1000);}
         });
       },350);
     }else{setTimeout(function(){stato("inattivo");},1800);}
@@ -398,13 +421,31 @@ testo.addEventListener("keydown",function(e){if(e.key==="Enter")invia();});
 /* ===== PULSANTI ===== */
 btn.onclick=function(){
   sblocca();
+  if(VOCE.inAttesa)return;
   if(VOCE.fase==="ascolto"){
+    var r1=VOCE.rec;
+    if(VOCE.manuale){ /* secondo tocco: chiusura forzata */
+      log("Ascolto chiuso a forza.");VOCE.rec=null;pulisciT();try{r1.abort();}catch(x){}
+      imposta("idle");stato("inattivo");return;
+    }
     log("Ascolto concluso a mano.");VOCE.manuale=true;
-    try{VOCE.rec.stop();}catch(x){}return;
+    try{r1.stop();}catch(x){}
+    setTimeout(function(){ /* se iPhone non risponde allo stop */
+      if(VOCE.rec!==r1||VOCE.fase!=="ascolto")return;
+      log("Ascolto bloccato: lo chiudo io.");
+      if(VOCE.parz.length>1){chiudi(VOCE.parz);}
+      else{VOCE.rec=null;pulisciT();try{r1.abort();}catch(x){}imposta("idle");stato("inattivo");ultimaEl.textContent="Nessuna voce rilevata.";}
+    },1500);
+    return;
   }
   if(VOCE.fase==="pensa")return;
   if(VOCE.fase==="parla"){fermaVoce();log("Voce interrotta.");}
-  ascolta(false);
+  /* iPhone ha bisogno di un istante per restituire il microfono dopo la voce */
+  var attesa=Math.max(0,900-(Date.now()-VOCE.fineTTS));
+  if(attesa>0){
+    VOCE.inAttesa=true;
+    setTimeout(function(){VOCE.inAttesa=false;ascolta(false);},attesa);
+  }else{ascolta(false);}
 };
 function aggConv(){document.getElementById("btnConv").textContent="Conversazione continua: "+(VOCE.conv?"accesa":"spenta");}
 document.getElementById("btnConv").onclick=function(){
