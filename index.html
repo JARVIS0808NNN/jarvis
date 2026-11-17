@@ -81,6 +81,12 @@ h2{font-size:20px;font-weight:500;letter-spacing:.04em}
 #log small{color:var(--dim);margin-right:8px}
 .cur::after{content:'\25AE';color:var(--red);animation:blink 1s steps(2) infinite}
 @keyframes blink{50%{opacity:0}}
+.imp{flex:1;overflow-y:auto;padding-top:10px}
+.imp h3{font-size:14px;letter-spacing:.05em;margin-bottom:10px}
+.voceop{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;background:var(--card)}
+.voceop.sel{border-color:var(--red)}
+.imp label{display:block;font-size:14px;color:var(--dim);margin:14px 0 4px}
+.imp input[type=range]{width:100%;accent-color:var(--red)}
 button:focus-visible,input:focus-visible{outline:2px solid var(--azure);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){.orb i,.orb b,#cass{animation:none;transition:none}}
 </style>
@@ -116,6 +122,19 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--azure);outline-
   <div id="log"></div>
 </section>
 
+<section class="view" id="impostazioni">
+  <div class="top"><button class="back" data-go="home">Indietro</button><h2>Impostazioni</h2><span></span></div>
+  <div class="imp">
+    <h3>Voce di JARVIS</h3>
+    <div id="elencoVoci"></div>
+    <button class="demo" id="aggVoci" style="margin:6px 0">Aggiorna elenco</button>
+    <label>Velocità <input type="range" id="vel" min="0.7" max="1.3" step="0.05"></label>
+    <label>Tono <input type="range" id="tono" min="0.7" max="1.3" step="0.05"></label>
+    <button class="demo" id="provaVoce" style="margin:14px 0 6px">Prova la voce</button>
+    <p class="nota" id="notaVoci" style="text-align:left"></p>
+  </div>
+</section>
+
 <section class="view" id="altro">
   <div class="top"><button class="back" data-go="home">Indietro</button><h2 id="titolo"></h2><span></span></div>
   <p class="vuotoTxt" id="descr"></p>
@@ -132,7 +151,7 @@ var SEZIONI=[
  ["dispositivi","Dispositivi","Casa e computer","Il controllo dei dispositivi arriverà in una fase successiva."],
  ["business","Business","Idee e progetti","Qui raccoglieremo le Sue idee di business. Sarà una delle prime sezioni attivate."],
  ["cervello","Cervello","Memoria di JARVIS","Qui potrà leggere, correggere ed eliminare tutto ciò che JARVIS ricorda. La memoria nasce nel passo successivo."],
- ["impostazioni","Impostazioni","Permessi","Ogni funzione avrà un permesso separato, che Lei potrà concedere o revocare qui."]
+ ["impostazioni","Impostazioni","Voce e permessi",""]
 ];
 var STATI={inattivo:"Inattivo",ascolto:"In ascolto",elaborazione:"Elaborazione",risposta:"Risposta"};
 var orb=document.getElementById("orb");
@@ -160,6 +179,7 @@ function vai(id){
 }
 function apri(s){
   menu(false);
+  if(s[0]==="impostazioni"){vai("impostazioni");mostraVoci();return;}
   if(["home","chat","attivita"].indexOf(s[0])>=0){vai(s[0]);return;}
   document.getElementById("titolo").textContent=s[1];
   document.getElementById("descr").textContent=s[3];
@@ -296,10 +316,11 @@ function ascolta(retry){
       if(VOCE.rec!==r)return;
       statInc("silenzio");log("Nessun audio ricevuto: ricomincio.");
       VOCE.rec=null;try{r.abort();}catch(x){}
-      riprova("Ascolto senza audio",3);
-    },8000);
+      riprova("Ascolto senza audio",4);
+    },3500);
   };
-  r.onspeechstart=function(){if(VOCE.rec!==r)return;log("Sento la Sua voce.");};
+  r.onaudiostart=function(){if(VOCE.rec!==r)return;log("Audio in ingresso attivo.");};
+  r.onspeechstart=function(){if(VOCE.rec!==r)return;clearTimeout(VOCE.tAudio);log("Sento la Sua voce.");};
   r.onresult=function(e){
     if(VOCE.rec!==r)return;
     var full="",fin=false;
@@ -345,7 +366,10 @@ function sblocca(){
   if(!window.speechSynthesis)return;
   try{var u=new SpeechSynthesisUtterance(" ");u.volume=0;speechSynthesis.speak(u);}catch(x){}
 }
-var VOCE_SCELTA=null;
+function lsGet(k,d){try{var v=localStorage.getItem(k);return v===null?d:v;}catch(x){return d;}}
+function lsSet(k,v){try{localStorage.setItem(k,v);}catch(x){}}
+function numLs(k,d){var n=parseFloat(lsGet(k,""));return isNaN(n)?d:n;}
+var VOCE_SCELTA=null,ULTIMO_ELENCO="";
 function vociItaliane(){
   var tutte=window.speechSynthesis?speechSynthesis.getVoices():[];
   return tutte.filter(function(v){return v.lang&&v.lang.toLowerCase().replace("_","-").indexOf("it")===0;});
@@ -353,18 +377,18 @@ function vociItaliane(){
 function sceltaVoce(){
   var vs=vociItaliane();
   if(!vs.length)return VOCE_SCELTA;
-  var salvata=null;try{salvata=localStorage.getItem("jv_voce");}catch(x){}
-  var v=(salvata&&vs.filter(function(x){return x.name===salvata;})[0])
+  var sc=lsGet("jv_voce_sc","");
+  var v=(sc&&vs.filter(function(x){return x.name===sc;})[0])
      ||vs.filter(function(x){return /luca/i.test(x.name);})[0]
      ||vs.filter(function(x){return /premium|enhanced|migliorata/i.test(x.name);})[0]
      ||vs[0];
-  if(v){VOCE_SCELTA=v;if(!salvata){try{localStorage.setItem("jv_voce",v.name);}catch(x){}}}
-  return VOCE_SCELTA;
+  VOCE_SCELTA=v;return v;
 }
-setTimeout(function(){
-  var n=vociItaliane().map(function(v){return v.name;});
-  log("Voci italiane disponibili: "+(n.length?n.join(", "):"nessuna"));
-},1500);
+function logVoci(){
+  var n=vociItaliane().map(function(v){return v.name;}).join(", ")||"nessuna";
+  if(n!==ULTIMO_ELENCO){ULTIMO_ELENCO=n;log("Voci italiane disponibili: "+n);}
+}
+setTimeout(logVoci,1500);setTimeout(logVoci,4000);
 function fineVoce(fine){
   VOCE.fineTTS=Date.now();
   if(VOCE.fase==="parla"){imposta("idle");stato("inattivo");}
@@ -381,7 +405,7 @@ function pronuncia(t,fine){
     if(id!==VOCE.ttsId)return;
     if(i>=parti.length){log("Voce terminata.");fineVoce(fine);return;}
     var u=new SpeechSynthesisUtterance(parti[i++].trim());
-    u.lang="it-IT";u.rate=0.95;
+    u.lang="it-IT";u.rate=numLs("jv_vel",0.95);u.pitch=numLs("jv_tono",1);
     var v=sceltaVoce();if(v)u.voice=v;
     if(i===1)u.onstart=function(){if(id===VOCE.ttsId)log("Voce avviata: "+(v?v.name:"predefinita")+".");};
     u.onend=prossima;
@@ -391,7 +415,7 @@ function pronuncia(t,fine){
   try{speechSynthesis.cancel();}catch(x){}
   setTimeout(prossima,200);
 }
-if(window.speechSynthesis)speechSynthesis.onvoiceschanged=function(){};
+if(window.speechSynthesis)speechSynthesis.onvoiceschanged=function(){logVoci();};
 
 /* ===== RICHIESTE ===== */
 function elabora(t,vocale){
@@ -452,6 +476,37 @@ document.getElementById("btnConv").onclick=function(){
   VOCE.conv=!VOCE.conv;aggConv();
   log(VOCE.conv?"Conversazione continua accesa: dopo ogni risposta riascolto da solo.":"Conversazione continua spenta.");
 };
+/* ===== IMPOSTAZIONI VOCE ===== */
+function parlaProva(v){
+  if(!window.speechSynthesis)return;
+  var u=new SpeechSynthesisUtterance("Buongiorno, Signore. Sono JARVIS, a Sua disposizione.");
+  u.lang="it-IT";u.rate=numLs("jv_vel",0.95);u.pitch=numLs("jv_tono",1);if(v)u.voice=v;
+  try{speechSynthesis.cancel();}catch(x){}
+  speechSynthesis.speak(u);
+}
+function mostraVoci(){
+  var box=document.getElementById("elencoVoci");box.innerHTML="";
+  var vs=vociItaliane();
+  var tot=window.speechSynthesis?speechSynthesis.getVoices().length:0;
+  document.getElementById("notaVoci").textContent="Il browser vede "+tot+" voci, di cui "+vs.length+" italiane. Se una voce che ha scaricato non compare, il browser non la mette a disposizione delle pagine web.";
+  if(!vs.length){var p=document.createElement("p");p.className="nota";p.style.textAlign="left";p.textContent="Nessuna voce italiana visibile al momento. Tocchi Aggiorna elenco.";box.appendChild(p);return;}
+  var att=sceltaVoce();
+  vs.forEach(function(v){
+    var sel=att&&att.name===v.name;
+    var riga=document.createElement("div");riga.className="voceop"+(sel?" sel":"");
+    var nome=document.createElement("span");nome.textContent=(sel?"✓ ":"")+v.name;
+    var pb=document.createElement("button");pb.className="back";pb.textContent="Prova";
+    pb.onclick=function(e){e.stopPropagation();parlaProva(v);};
+    riga.onclick=function(){lsSet("jv_voce_sc",v.name);mostraVoci();parlaProva(v);};
+    riga.appendChild(nome);riga.appendChild(pb);box.appendChild(riga);
+  });
+}
+var elVel=document.getElementById("vel"),elTono=document.getElementById("tono");
+elVel.value=numLs("jv_vel",0.95);elTono.value=numLs("jv_tono",1);
+elVel.oninput=function(){lsSet("jv_vel",elVel.value);};
+elTono.oninput=function(){lsSet("jv_tono",elTono.value);};
+document.getElementById("aggVoci").onclick=function(){logVoci();mostraVoci();};
+document.getElementById("provaVoce").onclick=function(){parlaProva(sceltaVoce());};
 /* se la pagina va in secondo piano mentre ascolta */
 document.addEventListener("visibilitychange",function(){
   if(document.hidden&&VOCE.fase==="ascolto"){
