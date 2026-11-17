@@ -99,6 +99,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--azure);outline-
   <div class="orbwrap"><div class="orb" id="orb" data-s="inattivo"><i></i><i></i><i></i><b></b></div></div>
   <button id="btnparla">PARLA</button>
   <div class="ultima" id="ultima"></div>
+  <button class="demo" id="btnConv" style="margin:0 auto 12px">Conversazione continua: spenta</button>
   <div class="pannelli" id="pannelli"></div>
   <button class="demo" id="btnDemo">Mostra una dimostrazione</button>
   <div class="nota">Le voci marcate DEMO sono simulate. Le altre sono attività reali.</div>
@@ -142,10 +143,11 @@ function stato(s){
   document.querySelectorAll("[data-stato]").forEach(function(e){e.textContent=STATI[s];});
 }
 function scrivi(el,t,fine){
+  if(el._iv)clearInterval(el._iv);
   var i=0;el.classList.add("cur");
-  var iv=setInterval(function(){
+  el._iv=setInterval(function(){
     i++;el.textContent=t.slice(0,i);
-    if(i>=t.length){clearInterval(iv);el.classList.remove("cur");if(fine)fine();}
+    if(i>=t.length){clearInterval(el._iv);el._iv=null;el.classList.remove("cur");if(fine)fine();}
   },22);
 }
 
@@ -242,54 +244,181 @@ var h=new Date().getHours();
 var sal=(h<5||h>=19)?"Buonasera":(h<13?"Buongiorno":"Buon pomeriggio");
 scrivi(document.getElementById("ultima"),sal+", Signore. Sono a Sua disposizione.");
 
-/* voce */
+/* ===== VOCE: motore robusto ===== */
+var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+var btn=document.getElementById("btnparla");
+var ultimaEl=document.getElementById("ultima");
+var VOCE={fase:"idle",rec:null,tent:0,parz:"",finito:false,errore:false,manuale:false,conv:false,ttsId:0,tStart:null,tSil:null,tMax:null};
+var ETICHETTE={idle:"PARLA",ascolto:"TOCCA: HO FINITO",pensa:"ELABORO...",parla:"INTERROMPI"};
+function imposta(f){VOCE.fase=f;btn.textContent=ETICHETTE[f];}
+
+/* statistiche: servono a capire perché a volte non Ti sente */
+var STAT={};
+try{STAT=JSON.parse(localStorage.getItem("jv_stat")||"{}");}catch(x){STAT={};}
+function statInc(k){STAT[k]=(STAT[k]||0)+1;try{localStorage.setItem("jv_stat",JSON.stringify(STAT));}catch(x){}}
+function statTxt(){return "Microfono: riuscite "+(STAT.ok||0)+" su "+(STAT.tent||0)+" avvii | nessuna voce "+(STAT.nospeech||0)+" | occupato "+(STAT.audio||0)+" | rete "+(STAT.net||0)+" | avvio bloccato "+(STAT.hang||0);}
+if(STAT.tent)log("Statistiche precedenti. "+statTxt());
+
+function pulisciT(){clearTimeout(VOCE.tStart);clearTimeout(VOCE.tSil);clearTimeout(VOCE.tMax);}
+function fallito(msg){
+  pulisciT();VOCE.rec=null;VOCE.conv=false;aggConv();
+  imposta("idle");stato("inattivo");log(msg);ultimaEl.textContent=msg;
+}
+function riprova(motivo,max){
+  if(VOCE.tent<max){log(motivo+": riprovo.");setTimeout(function(){ascolta(true);},450);}
+  else{fallito(motivo+". Tocchi di nuovo PARLA, Signore.");}
+}
+function chiudi(testo){
+  if(VOCE.finito)return;
+  VOCE.finito=true;pulisciT();statInc("ok");
+  var r=VOCE.rec;VOCE.rec=null;try{r.abort();}catch(x){}
+  log("Ho capito: "+testo);
+  elabora(testo,true);
+}
+function ascolta(retry){
+  if(!SR){
+    log("Riconoscimento vocale non disponibile in questa pagina.");
+    aggiungi("Il microfono non è disponibile in questa pagina, Signore. Usi il microfono della tastiera.","j");
+    vai("chat");return;
+  }
+  pulisciT();
+  if(!retry)VOCE.tent=0;
+  VOCE.tent++;statInc("tent");
+  VOCE.parz="";VOCE.finito=false;VOCE.errore=false;VOCE.manuale=false;
+  VOCE.ttsId++;try{speechSynthesis.cancel();}catch(x){}
+  var r=new SR();VOCE.rec=r;
+  r.lang="it-IT";r.interimResults=true;r.continuous=false;r.maxAlternatives=1;
+  imposta("ascolto");stato("ascolto");
+  log("In ascolto (tentativo "+VOCE.tent+")...");
+  r.onstart=function(){if(VOCE.rec!==r)return;clearTimeout(VOCE.tStart);log("Microfono pronto.");};
+  r.onspeechstart=function(){if(VOCE.rec!==r)return;log("Sento la Sua voce.");};
+  r.onresult=function(e){
+    if(VOCE.rec!==r)return;
+    var full="",fin=false;
+    for(var i=0;i<e.results.length;i++){full+=e.results[i][0].transcript;fin=e.results[i].isFinal;}
+    VOCE.parz=full.trim();
+    if(ultimaEl._iv){clearInterval(ultimaEl._iv);ultimaEl._iv=null;}
+    ultimaEl.classList.remove("cur");ultimaEl.textContent=VOCE.parz;
+    clearTimeout(VOCE.tSil);
+    if(fin){chiudi(VOCE.parz);}
+    else{VOCE.tSil=setTimeout(function(){if(VOCE.rec!==r)return;log("Silenzio: concludo l'ascolto.");try{r.stop();}catch(x){}},1700);}
+  };
+  r.onerror=function(e){
+    if(VOCE.rec!==r||VOCE.finito)return;
+    VOCE.errore=true;var c=e.error;log("Errore microfono: "+c);
+    if(c==="aborted"&&VOCE.manuale)return;
+    if(c==="not-allowed"||c==="service-not-allowed"){fallito("Il microfono è bloccato. Riapra l'app e tocchi Consenti, oppure controlli Impostazioni, Safari, Microfono.");return;}
+    if(c==="no-speech"){statInc("nospeech");riprova("Non ho sentito nulla",2);return;}
+    if(c==="audio-capture"){statInc("audio");riprova("Microfono occupato",3);return;}
+    if(c==="network"){statInc("net");riprova("Problema di rete",3);return;}
+    riprova("Errore "+c,2);
+  };
+  r.onend=function(){
+    if(VOCE.rec!==r||VOCE.finito||VOCE.errore)return;
+    clearTimeout(VOCE.tStart);
+    if(VOCE.parz.length>1){log("Ascolto chiuso: uso quanto ho sentito.");chiudi(VOCE.parz);}
+    else if(VOCE.manuale){fallito("Nessuna voce rilevata.");}
+    else{riprova("Ascolto chiuso senza voce",2);}
+  };
+  /* controllo: se iPhone non avvia il microfono entro 3,5 secondi */
+  VOCE.tStart=setTimeout(function(){
+    if(VOCE.rec!==r)return;
+    statInc("hang");log("Avvio bloccato: ricomincio.");
+    VOCE.rec=null;try{r.abort();}catch(x){}
+    riprova("Avvio bloccato",3);
+  },3500);
+  /* limite massimo di ascolto */
+  VOCE.tMax=setTimeout(function(){if(VOCE.rec!==r)return;log("Tempo massimo: concludo.");try{r.stop();}catch(x){}},20000);
+  try{r.start();}catch(x){VOCE.rec=null;fallito("Impossibile avviare il microfono.");}
+}
+
+/* ===== VOCE DI JARVIS ===== */
 function sblocca(){
   if(!window.speechSynthesis)return;
   try{var u=new SpeechSynthesisUtterance(" ");u.volume=0;speechSynthesis.speak(u);}catch(x){}
 }
-function pronuncia(t){
-  if(!window.speechSynthesis){stato("inattivo");return;}
-  var u=new SpeechSynthesisUtterance(t);u.lang="it-IT";u.rate=0.95;
-  var vs=speechSynthesis.getVoices().filter(function(v){return v.lang&&v.lang.toLowerCase().indexOf("it")===0;});
-  var m=vs.filter(function(v){return /luca|male|uomo/i.test(v.name);})[0]||vs[0];
-  if(m)u.voice=m;
-  u.onstart=function(){log("Voce avviata.");};
-  u.onerror=function(e){log("Errore voce: "+e.error);stato("inattivo");};
-  u.onend=function(){log("Voce terminata.");stato("inattivo");};
-  speechSynthesis.cancel();speechSynthesis.speak(u);
+function sceltaVoce(){
+  var vs=(window.speechSynthesis?speechSynthesis.getVoices():[]).filter(function(v){return v.lang&&v.lang.toLowerCase().replace("_","-").indexOf("it")===0;});
+  return vs.filter(function(v){return /luca/i.test(v.name);})[0]
+      ||vs.filter(function(v){return /premium|enhanced|migliorata/i.test(v.name);})[0]
+      ||vs[0]||null;
 }
+function fineVoce(fine){
+  if(VOCE.fase==="parla"){imposta("idle");stato("inattivo");}
+  if(fine)fine();
+}
+function fermaVoce(){VOCE.ttsId++;try{speechSynthesis.cancel();}catch(x){}if(VOCE.fase==="parla"){imposta("idle");stato("inattivo");}}
+function pronuncia(t,fine){
+  if(!window.speechSynthesis){fineVoce(fine);return;}
+  var id=++VOCE.ttsId;
+  var parti=t.match(/[^.!?]+[.!?]*/g)||[t];
+  var i=0;
+  imposta("parla");stato("risposta");
+  function prossima(){
+    if(id!==VOCE.ttsId)return;
+    if(i>=parti.length){log("Voce terminata.");fineVoce(fine);return;}
+    var u=new SpeechSynthesisUtterance(parti[i++].trim());
+    u.lang="it-IT";u.rate=0.95;
+    var v=sceltaVoce();if(v)u.voice=v;
+    if(i===1)u.onstart=function(){if(id===VOCE.ttsId)log("Voce avviata.");};
+    u.onend=prossima;
+    u.onerror=function(e){if(id!==VOCE.ttsId)return;log("Errore voce: "+e.error);fineVoce(fine);};
+    speechSynthesis.speak(u);
+  }
+  try{speechSynthesis.cancel();}catch(x){}
+  setTimeout(prossima,200);
+}
+if(window.speechSynthesis)speechSynthesis.onvoiceschanged=function(){};
+
+/* ===== RICHIESTE ===== */
 function elabora(t,vocale){
   aggiungi(t,"io");
   stato("elaborazione");
+  if(vocale)imposta("pensa");
   log("Ricevuta la Sua richiesta.");log("Elaboro la richiesta...");
   riga("ric","Nessuna ricerca eseguita: il motore non è ancora collegato.");
   setTimeout(function(){
     var r="Messaggio ricevuto, Signore. Per ora non posso ancora rispondere nel merito.";
     stato("risposta");aggiungi(r,"j",true);
     log("Risposta preparata. Cervello AI non ancora collegato.");
-    scrivi(document.getElementById("ultima"),r);
-    if(vocale){setTimeout(function(){pronuncia(r);},350);}else{setTimeout(function(){stato("inattivo");},1800);}
+    scrivi(ultimaEl,r);
+    if(vocale){
+      setTimeout(function(){
+        pronuncia(r,function(){
+          if(VOCE.conv){setTimeout(function(){if(VOCE.conv&&VOCE.fase==="idle"){log("Conversazione: riascolto.");ascolta(false);}},800);}
+        });
+      },350);
+    }else{setTimeout(function(){stato("inattivo");},1800);}
   },900);
 }
 function invia(){var t=testo.value.trim();if(!t)return;testo.value="";elabora(t,false);}
 document.getElementById("invia").onclick=invia;
 testo.addEventListener("keydown",function(e){if(e.key==="Enter")invia();});
 
-var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-document.getElementById("btnparla").onclick=function(){
+/* ===== PULSANTI ===== */
+btn.onclick=function(){
   sblocca();
-  if(!SR){
-    log("Riconoscimento vocale non disponibile in questa pagina.");
-    aggiungi("Il microfono non è disponibile in questa pagina, Signore. Usi il microfono della tastiera.","j");
-    vai("chat");return;
+  if(VOCE.fase==="ascolto"){
+    log("Ascolto concluso a mano.");VOCE.manuale=true;
+    try{VOCE.rec.stop();}catch(x){}return;
   }
-  var r=new SR();r.lang="it-IT";r.interimResults=false;
-  stato("ascolto");log("In ascolto...");
-  r.onresult=function(e){elabora(e.results[0][0].transcript,true);};
-  r.onerror=function(e){stato("inattivo");log("Microfono non disponibile ("+e.error+").");};
-  r.onend=function(){if(orb.dataset.s==="ascolto")stato("inattivo");};
-  try{r.start();}catch(x){stato("inattivo");log("Impossibile avviare il microfono.");}
+  if(VOCE.fase==="pensa")return;
+  if(VOCE.fase==="parla"){fermaVoce();log("Voce interrotta.");}
+  ascolta(false);
 };
+function aggConv(){document.getElementById("btnConv").textContent="Conversazione continua: "+(VOCE.conv?"accesa":"spenta");}
+document.getElementById("btnConv").onclick=function(){
+  VOCE.conv=!VOCE.conv;aggConv();
+  log(VOCE.conv?"Conversazione continua accesa: dopo ogni risposta riascolto da solo.":"Conversazione continua spenta.");
+};
+/* se la pagina va in secondo piano mentre ascolta */
+document.addEventListener("visibilitychange",function(){
+  if(document.hidden&&VOCE.fase==="ascolto"){
+    var r=VOCE.rec;VOCE.rec=null;pulisciT();try{r.abort();}catch(x){}
+    imposta("idle");stato("inattivo");log("Pagina in secondo piano: ascolto fermato.");
+  }
+  if(document.hidden)fermaVoce();
+});
 </script>
 </body>
 </html>
